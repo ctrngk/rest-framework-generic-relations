@@ -6,7 +6,7 @@ from django import forms
 
 from rest_framework.compat import six
 from rest_framework import serializers
-
+from rest_framework.fields import SkipField
 
 __all__ = ('GenericSerializerMixin', 'GenericModelSerializer',)
 
@@ -29,6 +29,9 @@ class GenericSerializerMixin(object):
         super(GenericSerializerMixin, self).__init__(*args, **kwargs)
         self.serializers = serializers
         for serializer in self.serializers.values():
+            if serializer.source is not None:
+                msg = '{}() cannot be re-used. Create a new instance.'
+                raise RuntimeError(msg.format(type(serializer).__name__))
             serializer.bind('', self)
 
     def to_internal_value(self, data):
@@ -75,9 +78,28 @@ class GenericSerializerMixin(object):
                 'There were multiple serializers found for value %r.' % value)
         return serializers[0]
 
+    def get_attribute(self, instance):
+        """ Without this method, you have to map all possible models as follows.
+            tagged_object = GenericRelatedField({
+                Bookmark: BookmarkSerializer(),
+                Note: NoteSerializer()
+            })
+            With this method, now you could map partial models as follows. 
+            It would not angrily fail again.
+            tagged_object = GenericRelatedField({
+                Note: NoteSerializer(), 
+            })
+        """
+            
+        attribute = super(GenericSerializerMixin, self).get_attribute(instance)
+        for klass in attribute.__class__.mro():
+            if klass in self.serializers:
+                return attribute
+        raise SkipField()
 
 class GenericModelSerializer(GenericSerializerMixin, serializers.Serializer):
     """
     Delegates serialization and deserialization to registered serializers
     based on the type of the model.
     """
+
